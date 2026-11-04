@@ -1,36 +1,38 @@
 import os
 import datetime
 import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.header import Header
 from bs4 import BeautifulSoup
 
-# 從 GitHub Secrets 讀取密鑰（保護你的 Token 不會外洩）
 TARGET_URL = "https://takachiho-kanko.info/boat/" 
 TARGET_DATE = "2026-11-18"  # 欲監控的日期
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-LINE_NOTIFY_TOKEN = os.environ.get("LINE_NOTIFY_TOKEN", "")
+# 從 GitHub Secrets 讀取 Email 設定
+MAIL_SENDER = os.environ.get("MAIL_SENDER", "")       # 您的 Gmail 帳號
+MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD", "")   # 您的 Gmail 應用程式密碼
+MAIL_RECEIVER = os.environ.get("MAIL_RECEIVER", "")   # 收件人信箱（通常跟寄件人一樣）
 
-def send_telegram_msg(message):
-    if not TELEGRAM_BOT_TOKEN:
+def send_email_notification(message_body):
+    if not MAIL_SENDER or not MAIL_PASSWORD or not MAIL_RECEIVER:
+        print("未完整設定 Email 密鑰，略過寄信通知。")
         return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    
     try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Telegram 發送失敗: {e}")
+        message = MIMEText(message_body, 'plain', 'utf-8')
+        message['From'] = Header(MAIL_SENDER, 'utf-8')
+        message['To'] = Header(MAIL_RECEIVER, 'utf-8')
+        message['Subject'] = Header(f"【高千穗船票通知】{TARGET_DATE} 有空位了！", 'utf-8')
 
-def send_line_notify(message):
-    if not LINE_NOTIFY_TOKEN:
-        return
-    url = "https://notify-api.line.me/api/notify"
-    headers = {"Authorization": f"Bearer {LINE_NOTIFY_TOKEN}"}
-    payload = {"message": message}
-    try:
-        requests.post(url, headers=headers, data=payload, timeout=10)
+        # 使用 Gmail SMTP 伺服器發信
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        server.login(MAIL_SENDER, MAIL_PASSWORD)
+        server.sendmail(MAIL_SENDER, [MAIL_RECEIVER], message.as_string())
+        server.quit()
+        print("成功發送 Email 通知！")
     except Exception as e:
-        print(f"LINE 發送失敗: {e}")
+        print(f"Email 發送失敗: {e}")
 
 def main():
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -49,8 +51,6 @@ def main():
             return
 
         soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 尋找日期並判斷是否有空位
         date_element = soup.find(text=lambda t: t and TARGET_DATE in t)
         
         is_available = False
@@ -68,9 +68,8 @@ def main():
                 f"偵測到有剩餘名額，請儘速搶購！\n"
                 f"搶票網址：{TARGET_URL}"
             )
-            print("成功發現空位！已發送通知。")
-            send_telegram_msg(msg)
-            send_line_notify(msg)
+            print("成功發現空位！已發送 Email 通知。")
+            send_email_notification(msg)
         else:
             print("尚未發現空位。")
 
